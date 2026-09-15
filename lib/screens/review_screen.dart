@@ -37,7 +37,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
       final newId = _items.isEmpty
           ? 1
           : _items.map((e) => e.id).reduce((a, b) => a > b ? a : b) + 1;
-      _items.add(ReceiptItem(id: newId, nama: 'Item baru', qty: 1, harga: 0));
+      _items.add(ReceiptItem(id: newId, nama: '', qty: 1, harga: 0));
     });
   }
 
@@ -89,7 +89,11 @@ class _ReviewScreenState extends State<ReviewScreen> {
                         flex: 3,
                         child: TextFormField(
                           initialValue: item.nama,
-                          decoration: const InputDecoration(border: InputBorder.none),
+                          decoration: const InputDecoration(
+                              border: InputBorder.none,
+                              hintText: 'Nama item',
+                              hintStyle: TextStyle(color: AppColors.muted, fontSize: 13),
+                          ),
                           style: const TextStyle(fontSize: 13),
                           onChanged: (v) => item.nama = v,
                         ),
@@ -110,10 +114,14 @@ class _ReviewScreenState extends State<ReviewScreen> {
                       SizedBox(
                         width: 75,
                         child: TextFormField(
-                          initialValue: item.harga.toString(),
+                          initialValue: item.harga == 0 ? '' : item.harga.toString(),
                           keyboardType: TextInputType.number,
                           textAlign: TextAlign.right,
-                          decoration: const InputDecoration(border: InputBorder.none),
+                          decoration: const InputDecoration(
+                            border: InputBorder.none,
+                            hintText: '0',
+                            hintStyle: TextStyle(color: AppColors.muted, fontSize: 13),
+                          ),
                           style: const TextStyle(fontSize: 13),
                           onChanged: (v) =>
                               setState(() => item.harga = int.tryParse(v) ?? item.harga),
