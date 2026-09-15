@@ -88,7 +88,7 @@ class _UploadScreenState extends State<UploadScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Patungan'),
+        title: const Text('Yuk Hitung-hitungan Kita'),
         backgroundColor: AppColors.ink,
         foregroundColor: AppColors.paper,
       ),

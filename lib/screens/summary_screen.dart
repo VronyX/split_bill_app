@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import '../models/receipt_item.dart';
+import '../models/assign_group.dart';
 import '../theme/app_theme.dart';
 
 class SummaryScreen extends StatelessWidget {
   final List<ReceiptItem> items;
   final List<String> people;
-  final Map<int, Set<String>> assignments;
+  final Map<int, List<AssignGroup>> assignments;
   final double pajakPersen;
   final int serviceTotal;
 
@@ -47,19 +48,27 @@ class SummaryScreen extends StatelessWidget {
           ),
           const SizedBox(height: 20),
           ...people.map((name) {
-            final myItems = items.where((it) {
-              final assigned = assignments[it.id] ?? {};
-              return assigned.contains(name);
-            }).toList();
-
-            double mySubtotal = 0;
             final lines = <String>[];
-            for (final it in myItems) {
-              final assigned = assignments[it.id]!;
-              final share = it.total / assigned.length;
-              mySubtotal += share;
-              lines.add('${it.nama}${it.qty > 1 ? " x${it.qty}" : ""}  —  Rp ${share.round()}');
+            double mySubtotal = 0;
+
+            for (final it in items) {
+              final groups = assignments[it.id] ?? [];
+              final totalUnits = groups.fold(0, (s, g) => s + g.units);
+              if (totalUnits == 0) continue;
+              final pricePerUnit = it.total / totalUnits;
+
+              for (final g in groups) {
+                if (!g.people.contains(name)) continue;
+                final groupCost = g.units * pricePerUnit;
+                final share = groupCost / g.people.length;
+                mySubtotal += share;
+
+                final qtyLabel = it.qty > 1 ? " x${it.qty}" : "";
+                final shareLabel = g.people.length > 1 ? ' (patungan berdua)' : '';
+                lines.add('${it.nama}$qtyLabel$shareLabel  —  Rp ${share.round()}');
+              }
             }
+
             final myPajak = mySubtotal * (pajakPersen / 100);
             final myTotal = mySubtotal + myPajak + serviceEach;
 
