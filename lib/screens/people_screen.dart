@@ -7,12 +7,14 @@ class PeopleScreen extends StatefulWidget {
   final List<ReceiptItem> items;
   final double pajakPersen;
   final int serviceTotal;
+  final int diskonTotal;
 
   const PeopleScreen({
     super.key,
     required this.items,
     required this.pajakPersen,
     required this.serviceTotal,
+    this.diskonTotal = 0,
   });
 
   @override
@@ -111,6 +113,7 @@ class _PeopleScreenState extends State<PeopleScreen> {
                       people: _people,
                       pajakPersen: widget.pajakPersen,
                       serviceTotal: widget.serviceTotal,
+                      diskonTotal: widget.diskonTotal,
                     ),
                   ),
                 );

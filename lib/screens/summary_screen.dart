@@ -9,6 +9,7 @@ class SummaryScreen extends StatelessWidget {
   final Map<int, List<AssignGroup>> assignments;
   final double pajakPersen;
   final int serviceTotal;
+  final int diskonTotal;
 
   const SummaryScreen({
     super.key,
@@ -17,13 +18,17 @@ class SummaryScreen extends StatelessWidget {
     required this.assignments,
     required this.pajakPersen,
     required this.serviceTotal,
+    this.diskonTotal = 0,
   });
 
   @override
   Widget build(BuildContext context) {
     final subtotal = items.fold(0, (sum, it) => sum + it.total);
-    final pajakTotal = subtotal * (pajakPersen / 100);
-    final grandTotal = subtotal + pajakTotal + serviceTotal;
+    final int diskon = diskonTotal < 0 ? 0 : (diskonTotal > subtotal ? subtotal : diskonTotal);
+    final pajakTotal = (subtotal - diskon) * (pajakPersen / 100);
+    final grandTotal = subtotal - diskon + pajakTotal + serviceTotal;
+    // Diskon transaksi dibagi proporsional sesuai pesanan masing-masing.
+    final rasioDiskon = subtotal == 0 ? 0.0 : diskon / subtotal;
     final serviceEach = people.isEmpty ? 0 : serviceTotal / people.length;
 
     return Scaffold(
@@ -69,8 +74,9 @@ class SummaryScreen extends StatelessWidget {
               }
             }
 
-            final myPajak = mySubtotal * (pajakPersen / 100);
-            final myTotal = mySubtotal + myPajak + serviceEach;
+            final myDiskon = mySubtotal * rasioDiskon;
+            final myPajak = (mySubtotal - myDiskon) * (pajakPersen / 100);
+            final myTotal = mySubtotal - myDiskon + myPajak + serviceEach;
 
             return Container(
               margin: const EdgeInsets.only(bottom: 12),
@@ -109,7 +115,9 @@ class SummaryScreen extends StatelessWidget {
                     child: Text(l, style: const TextStyle(fontSize: 12, color: AppColors.muted)),
                   )),
                   const Divider(height: 16),
-                  Text('Pajak: Rp ${myPajak.round()}   •   Service: Rp ${serviceEach.round()}',
+                  Text(
+                      '${myDiskon > 0 ? 'Diskon: -Rp ${myDiskon.round()}   •   ' : ''}'
+                      'Pajak: Rp ${myPajak.round()}   •   Service: Rp ${serviceEach.round()}',
                       style: const TextStyle(fontSize: 11, color: AppColors.muted)),
                 ],
               ),

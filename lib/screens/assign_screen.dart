@@ -9,6 +9,7 @@ class AssignScreen extends StatefulWidget {
   final List<String> people;
   final double pajakPersen;
   final int serviceTotal;
+  final int diskonTotal;
 
   const AssignScreen({
     super.key,
@@ -16,6 +17,7 @@ class AssignScreen extends StatefulWidget {
     required this.people,
     required this.pajakPersen,
     required this.serviceTotal,
+    this.diskonTotal = 0,
   });
 
   @override
@@ -292,6 +294,7 @@ class _AssignScreenState extends State<AssignScreen> {
                   assignments: _assignments,
                   pajakPersen: widget.pajakPersen,
                   serviceTotal: widget.serviceTotal,
+                  diskonTotal: widget.diskonTotal,
                 ),
               ),
             );

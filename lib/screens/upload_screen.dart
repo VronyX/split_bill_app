@@ -63,25 +63,27 @@ class _UploadScreenState extends State<UploadScreen> {
       _isProcessing = true;
     });
 
-    // 2. Jalankan OCR.
-    final inputImage = InputImage.fromFile(_selectedImage!);
-    final recognizedText = await _textRecognizer.processImage(inputImage);
-
-    // 3. Parsing jadi list item.
-    final result = parseReceipt(recognizedText);
+    // 2. Jalankan OCR + parsing jadi list item.
+    ReceiptParseResult result;
+    try {
+      final inputImage = InputImage.fromFile(_selectedImage!);
+      final recognizedText = await _textRecognizer.processImage(inputImage);
+      result = parseReceipt(recognizedText);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isProcessing = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Gagal membaca struk. Coba foto ulang dengan lebih terang.')),
+        );
+      }
+      return;
+    }
 
     setState(() => _isProcessing = false);
     if (!mounted) return;
 
-    // 4. Pindah ke screen Review.
-    Navigator.of(context).push(
-      slideRoute(
-        ReviewScreen(
-          items: result.items,
-          adaBarisPajakTerpisah: result.adaBarisPajakTerpisah,
-        ),
-      ),
-    );
+    // 3. Pindah ke screen Review.
+    Navigator.of(context).push(slideRoute(ReviewScreen(result: result)));
   }
 
   @override

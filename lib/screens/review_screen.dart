@@ -1,17 +1,13 @@
 import 'package:flutter/material.dart';
 import '../models/receipt_item.dart';
+import '../services/receipt_parser_core.dart';
 import '../theme/app_theme.dart';
 import 'people_screen.dart';
 
 class ReviewScreen extends StatefulWidget {
-  final List<ReceiptItem> items;
-  final bool adaBarisPajakTerpisah;
+  final ReceiptParseResult result;
 
-  const ReviewScreen({
-    super.key,
-    required this.items,
-    required this.adaBarisPajakTerpisah,
-  });
+  const ReviewScreen({super.key, required this.result});
 
   @override
   State<ReviewScreen> createState() => _ReviewScreenState();
@@ -20,17 +16,58 @@ class ReviewScreen extends StatefulWidget {
 class _ReviewScreenState extends State<ReviewScreen> {
   late List<ReceiptItem> _items;
   late double _pajakPersen;
-  int _serviceTotal = 0;
+  late int _serviceTotal;
+  late int _diskonTotal;
 
   @override
   void initState() {
     super.initState();
-    _items = List.from(widget.items);
-    _pajakPersen = widget.adaBarisPajakTerpisah ? 10 : 0;
+    final r = widget.result;
+    _items = List.from(r.items);
+    _pajakPersen = r.pajakPersenSaran;
+    _serviceTotal = r.serviceSaran;
+    _diskonTotal = r.diskonTotal;
   }
 
   int get _subtotal => _items.fold(0, (sum, it) => sum + it.total);
-  double get _pajakTotal => _subtotal * (_pajakPersen / 100);
+  int get _setelahDiskon => _subtotal > _diskonTotal ? _subtotal - _diskonTotal : 0;
+  double get _pajakTotal => _setelahDiskon * (_pajakPersen / 100);
+  double get _grandTotal => _setelahDiskon + _pajakTotal + _serviceTotal;
+
+  static String _formatPersen(double v) =>
+      v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(2).replaceAll(RegExp(r'0+$'), '');
+
+  /// Pesan bantu: bandingkan hasil baca dengan subtotal/total yang tertera di struk.
+  Widget? _buildInfoBanner() {
+    final r = widget.result;
+    final pesan = <String>[];
+    if (r.pajakTermasuk) {
+      pesan.add('Harga di struk sudah termasuk pajak, jadi pajak diisi 0%.');
+    }
+    if (r.subtotalStruk != null && (r.subtotalStruk! - _subtotal).abs() > 2 &&
+        (r.subtotalStruk! - (_subtotal - _diskonTotal)).abs() > 2) {
+      pesan.add('Subtotal di struk Rp ${r.subtotalStruk}, tapi total item di sini '
+          'Rp $_subtotal. Cek apakah ada item yang terlewat atau salah baca.');
+    } else if (r.subtotalStruk == null && r.totalStruk != null &&
+        (r.totalStruk! - _grandTotal).abs() > 100) {
+      pesan.add('Total di struk Rp ${r.totalStruk}, hitungan di sini '
+          'Rp ${_grandTotal.round()}. Cek lagi item, pajak & service.');
+    }
+    if (pesan.isEmpty) return null;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF6E3D6),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Text(pesan.join('\n'),
+            style: const TextStyle(color: AppColors.ink, fontSize: 12)),
+      ),
+    );
+  }
 
   void _addItem() {
     setState(() {
@@ -55,6 +92,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
       ),
       body: Column(
         children: [
+          ?_buildInfoBanner(),
           if (_items.isEmpty)
             Padding(
               padding: const EdgeInsets.all(16),
@@ -159,16 +197,34 @@ class _ReviewScreenState extends State<ReviewScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('Pajak (%)', style: TextStyle(fontSize: 13)),
+                    const Text('Diskon (total)', style: TextStyle(fontSize: 13)),
                     SizedBox(
-                      width: 60,
+                      width: 90,
                       child: TextFormField(
-                        initialValue: _pajakPersen.toStringAsFixed(0),
+                        initialValue: _diskonTotal.toString(),
                         keyboardType: TextInputType.number,
                         textAlign: TextAlign.right,
                         decoration: const InputDecoration(isDense: true),
                         onChanged: (v) =>
-                            setState(() => _pajakPersen = double.tryParse(v) ?? 0),
+                            setState(() => _diskonTotal = int.tryParse(v) ?? 0),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('Pajak (%)', style: TextStyle(fontSize: 13)),
+                    SizedBox(
+                      width: 60,
+                      child: TextFormField(
+                        initialValue: _formatPersen(_pajakPersen),
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        textAlign: TextAlign.right,
+                        decoration: const InputDecoration(isDense: true),
+                        onChanged: (v) => setState(() =>
+                            _pajakPersen = double.tryParse(v.replaceAll(',', '.')) ?? 0),
                       ),
                     ),
                   ],
@@ -197,7 +253,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
                   children: [
                     const Text('Total', style: TextStyle(fontWeight: FontWeight.bold)),
                     Text(
-                      'Rp ${(_subtotal + _pajakTotal + _serviceTotal).round()}',
+                      'Rp ${_grandTotal.round()}',
                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                     ),
                   ],
@@ -217,6 +273,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
                       items: _items,
                       pajakPersen: _pajakPersen,
                       serviceTotal: _serviceTotal,
+                      diskonTotal: _diskonTotal,
                     ),
                   ),
                 );
