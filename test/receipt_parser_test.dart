@@ -62,7 +62,7 @@ void main() {
       expect(r.totalStruk, 21900);
       expect(r.pajakTermasuk, isTrue);
       expect(r.pajakPersenSaran, 0);
-      expect(r.serviceSaran, 0);
+      expect(r.servicePersenSaran, 0);
     });
 
     test('Alfamart: diskon per item', () {
@@ -118,11 +118,12 @@ void main() {
         'Ayam Bakar': [1, 40000],
       });
       expect(r.subtotalStruk, 91000);
-      expect(r.serviceSaran, 4550);
+      expect(r.servicePersenSaran, 5);
       expect(r.pajakNominal, 9555);
       expect(r.pajakTermasuk, isFalse);
-      // 91.000 * 10.5% = 9.555 -> total di app sama dengan struk.
-      expect(r.pajakPersenSaran, 10.5);
+      // PB1 10% dihitung dari subtotal + service: (91.000 + 4.550) * 10%.
+      expect(r.pajakPersenSaran, 10);
+      expect(r.pajakDenganService, isTrue);
       expect(r.totalStruk, 105105);
     });
 
@@ -184,6 +185,60 @@ void main() {
         'Lontong': [1, 5000],
       });
     });
+  });
+
+  group('struk asli: Bumi Aki', () {
+    String struk(String labelSubtotal) => '''
+      Celebrate Happiness
+      RM Bumi Aki Cisarua
+      Jalan Raya Cisarua No.18 KM 81 Cisarua, Kec. Cis
+      arua, Kabupaten Bogor, Jawa Barat 16750
+      Date : 07-07-2026 11:47
+      Time In : 07-07-2026 11:14
+      Info : ka Budi// 081234567890// new
+      Server : ISMAIL
+      Table : T.6
+      Purpose : Dine In
+      Pax : 2
+      Cashier : TINAH
+      Mie Goreng Special
+      1x @46.157 46.157
+      Nasi Goreng Spesial
+      1x @54.964 54.964
+      Telur Mata Sapi
+      1x @0 0
+      Nasi Liwet
+      1x @21.628 21.628
+      Perkedel Jagung
+      1x @29.480 29.480
+      Tempe Mendoan
+      1x @30.149 30.149
+      Pisang Goreng Keju
+      1x @40.911 40.911
+      Es Teh Tawar
+      1x @13.546 13.546
+      7 items
+      $labelSubtotal 236.835
+      SC 7% : 16.578
+      TAX : 25.341
+      Grand Total : 278.755
+      NOT PAID
+    ''';
+
+    // "Subtotal" di struk ini pudar, OCR bisa membacanya macam-macam.
+    for (final label in ['Subtotal :', 'Subtc tal :', 'Subtctal :', 'Subt tal :', ':']) {
+      test('label subtotal "$label"', () {
+        final r = parseReceiptRows(_rows(struk(label)));
+        expect(r.items.length, 7);
+        expect(r.itemsTotal, 236835);
+        expect(r.items.any((it) => it.nama.toLowerCase().contains('jawa')), isFalse);
+        expect(r.subtotalStruk, 236835);
+        expect(r.servicePersenSaran, 7);
+        expect(r.pajakPersenSaran, 10);
+        expect(r.pajakDenganService, isTrue);
+        expect(r.totalStruk, 278755);
+      });
+    }
   });
 
   group('header & diskon transaksi', () {

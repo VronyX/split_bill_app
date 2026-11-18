@@ -1,20 +1,17 @@
 import 'package:flutter/material.dart';
+import '../models/bill_charges.dart';
 import '../models/receipt_item.dart';
 import '../theme/app_theme.dart';
 import 'assign_screen.dart';
 
 class PeopleScreen extends StatefulWidget {
   final List<ReceiptItem> items;
-  final double pajakPersen;
-  final int serviceTotal;
-  final int diskonTotal;
+  final BillCharges charges;
 
   const PeopleScreen({
     super.key,
     required this.items,
-    required this.pajakPersen,
-    required this.serviceTotal,
-    this.diskonTotal = 0,
+    required this.charges,
   });
 
   @override
@@ -111,9 +108,7 @@ class _PeopleScreenState extends State<PeopleScreen> {
                     builder: (_) => AssignScreen(
                       items: widget.items,
                       people: _people,
-                      pajakPersen: widget.pajakPersen,
-                      serviceTotal: widget.serviceTotal,
-                      diskonTotal: widget.diskonTotal,
+                      charges: widget.charges,
                     ),
                   ),
                 );

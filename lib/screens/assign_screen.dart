@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../models/bill_charges.dart';
 import '../models/receipt_item.dart';
 import '../models/assign_group.dart';
 import '../theme/app_theme.dart';
@@ -7,17 +8,13 @@ import 'summary_screen.dart';
 class AssignScreen extends StatefulWidget {
   final List<ReceiptItem> items;
   final List<String> people;
-  final double pajakPersen;
-  final int serviceTotal;
-  final int diskonTotal;
+  final BillCharges charges;
 
   const AssignScreen({
     super.key,
     required this.items,
     required this.people,
-    required this.pajakPersen,
-    required this.serviceTotal,
-    this.diskonTotal = 0,
+    required this.charges,
   });
 
   @override
@@ -292,9 +289,7 @@ class _AssignScreenState extends State<AssignScreen> {
                   items: widget.items,
                   people: widget.people,
                   assignments: _assignments,
-                  pajakPersen: widget.pajakPersen,
-                  serviceTotal: widget.serviceTotal,
-                  diskonTotal: widget.diskonTotal,
+                  charges: widget.charges,
                 ),
               ),
             );

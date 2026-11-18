@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../models/bill_charges.dart';
 import '../models/receipt_item.dart';
 import '../services/receipt_parser_core.dart';
 import '../theme/app_theme.dart';
@@ -16,7 +17,8 @@ class ReviewScreen extends StatefulWidget {
 class _ReviewScreenState extends State<ReviewScreen> {
   late List<ReceiptItem> _items;
   late double _pajakPersen;
-  late int _serviceTotal;
+  late double _servicePersen;
+  late bool _pajakDenganService;
   late int _diskonTotal;
 
   @override
@@ -25,14 +27,27 @@ class _ReviewScreenState extends State<ReviewScreen> {
     final r = widget.result;
     _items = List.from(r.items);
     _pajakPersen = r.pajakPersenSaran;
-    _serviceTotal = r.serviceSaran;
+    _servicePersen = r.servicePersenSaran;
+    // Kalau struk tidak jelas, pakai kebiasaan umum: pajak setelah service.
+    _pajakDenganService = r.pajakDenganService || r.serviceNominal == null;
     _diskonTotal = r.diskonTotal;
   }
 
   int get _subtotal => _items.fold(0, (sum, it) => sum + it.total);
-  int get _setelahDiskon => _subtotal > _diskonTotal ? _subtotal - _diskonTotal : 0;
-  double get _pajakTotal => _setelahDiskon * (_pajakPersen / 100);
-  double get _grandTotal => _setelahDiskon + _pajakTotal + _serviceTotal;
+
+  BillCharges get _charges => BillCharges(
+        pajakPersen: _pajakPersen,
+        servicePersen: _servicePersen,
+        pajakDenganService: _pajakDenganService,
+        diskonTotal: _diskonTotal,
+      );
+
+  ChargeBreakdown get _rincian =>
+      _charges.hitung(_subtotal.toDouble(), subtotalSemua: _subtotal.toDouble());
+
+  double get _grandTotal => _rincian.total;
+
+  static double _parsePersen(String v) => double.tryParse(v.replaceAll(',', '.')) ?? 0;
 
   static String _formatPersen(double v) =>
       v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(2).replaceAll(RegExp(r'0+$'), '');
@@ -46,12 +61,12 @@ class _ReviewScreenState extends State<ReviewScreen> {
     }
     if (r.subtotalStruk != null && (r.subtotalStruk! - _subtotal).abs() > 2 &&
         (r.subtotalStruk! - (_subtotal - _diskonTotal)).abs() > 2) {
-      pesan.add('Subtotal di struk Rp ${r.subtotalStruk}, tapi total item di sini '
-          'Rp $_subtotal. Cek apakah ada item yang terlewat atau salah baca.');
+      pesan.add('Subtotal di struk ${formatRupiah(r.subtotalStruk!)}, tapi total item di sini '
+          '${formatRupiah(_subtotal)}. Cek apakah ada item yang terlewat atau salah baca.');
     } else if (r.subtotalStruk == null && r.totalStruk != null &&
         (r.totalStruk! - _grandTotal).abs() > 100) {
-      pesan.add('Total di struk Rp ${r.totalStruk}, hitungan di sini '
-          'Rp ${_grandTotal.round()}. Cek lagi item, pajak & service.');
+      pesan.add('Total di struk ${formatRupiah(r.totalStruk!)}, hitungan di sini '
+          '${formatRupiah(_grandTotal)}. Cek lagi item, pajak & service.');
     }
     if (pesan.isEmpty) return null;
     return Padding(
@@ -187,73 +202,60 @@ class _ReviewScreenState extends State<ReviewScreen> {
           ),
           Container(
             margin: const EdgeInsets.all(16),
-            padding: const EdgeInsets.all(14),
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
             decoration: BoxDecoration(
               color: AppColors.paperDark,
               borderRadius: BorderRadius.circular(12),
             ),
             child: Column(
               children: [
+                _chargeRow('Subtotal', null, _rincian.subtotal),
+                _chargeRow(
+                  'Diskon (Rp)',
+                  _numberField(
+                    initial: _diskonTotal.toString(),
+                    width: 80,
+                    onChanged: (v) => _diskonTotal = int.tryParse(v.replaceAll('.', '')) ?? 0,
+                  ),
+                  -_rincian.diskon,
+                ),
+                _chargeRow(
+                  'Service (%)',
+                  _numberField(
+                    initial: _formatPersen(_servicePersen),
+                    onChanged: (v) => _servicePersen = _parsePersen(v),
+                  ),
+                  _rincian.service,
+                ),
+                _chargeRow(
+                  'Pajak (%)',
+                  _numberField(
+                    initial: _formatPersen(_pajakPersen),
+                    onChanged: (v) => _pajakPersen = _parsePersen(v),
+                  ),
+                  _rincian.pajak,
+                ),
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('Diskon (total)', style: TextStyle(fontSize: 13)),
-                    SizedBox(
-                      width: 90,
-                      child: TextFormField(
-                        initialValue: _diskonTotal.toString(),
-                        keyboardType: TextInputType.number,
-                        textAlign: TextAlign.right,
-                        decoration: const InputDecoration(isDense: true),
-                        onChanged: (v) =>
-                            setState(() => _diskonTotal = int.tryParse(v) ?? 0),
-                      ),
+                    const Expanded(
+                      child: Text('Pajak dihitung dari subtotal + service',
+                          style: TextStyle(fontSize: 12, color: AppColors.muted)),
+                    ),
+                    Switch(
+                      value: _pajakDenganService,
+                      activeThumbColor: AppColors.stamp,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      onChanged: (v) => setState(() => _pajakDenganService = v),
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Pajak (%)', style: TextStyle(fontSize: 13)),
-                    SizedBox(
-                      width: 60,
-                      child: TextFormField(
-                        initialValue: _formatPersen(_pajakPersen),
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        textAlign: TextAlign.right,
-                        decoration: const InputDecoration(isDense: true),
-                        onChanged: (v) => setState(() =>
-                            _pajakPersen = double.tryParse(v.replaceAll(',', '.')) ?? 0),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Service (total)', style: TextStyle(fontSize: 13)),
-                    SizedBox(
-                      width: 90,
-                      child: TextFormField(
-                        initialValue: _serviceTotal.toString(),
-                        keyboardType: TextInputType.number,
-                        textAlign: TextAlign.right,
-                        decoration: const InputDecoration(isDense: true),
-                        onChanged: (v) =>
-                            setState(() => _serviceTotal = int.tryParse(v) ?? 0),
-                      ),
-                    ),
-                  ],
-                ),
-                const Divider(height: 20),
+                const Divider(height: 14),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     const Text('Total', style: TextStyle(fontWeight: FontWeight.bold)),
                     Text(
-                      'Rp ${_grandTotal.round()}',
+                      formatRupiah(_rincian.total),
                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                     ),
                   ],
@@ -269,12 +271,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
                   : () {
                 Navigator.of(context).push(
                   MaterialPageRoute(
-                    builder: (_) => PeopleScreen(
-                      items: _items,
-                      pajakPersen: _pajakPersen,
-                      serviceTotal: _serviceTotal,
-                      diskonTotal: _diskonTotal,
-                    ),
+                    builder: (_) => PeopleScreen(items: _items, charges: _charges),
                   ),
                 );
               },
@@ -282,6 +279,44 @@ class _ReviewScreenState extends State<ReviewScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _chargeRow(String label, Widget? field, double nominal) {
+    return SizedBox(
+      height: 34,
+      child: Row(
+        children: [
+          Expanded(child: Text(label, style: const TextStyle(fontSize: 13))),
+          ?field,
+          SizedBox(
+            width: 100,
+            child: Text(
+              formatRupiah(nominal),
+              textAlign: TextAlign.right,
+              style: const TextStyle(fontSize: 13),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _numberField({
+    required String initial,
+    required void Function(String) onChanged,
+    double width = 52,
+  }) {
+    return SizedBox(
+      width: width,
+      child: TextFormField(
+        initialValue: initial,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        textAlign: TextAlign.right,
+        style: const TextStyle(fontSize: 13),
+        decoration: const InputDecoration(isDense: true),
+        onChanged: (v) => setState(() => onChanged(v)),
       ),
     );
   }

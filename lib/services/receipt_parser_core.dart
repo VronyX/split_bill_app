@@ -62,8 +62,12 @@ class ReceiptParseResult {
   /// supaya nominal pajak sama dengan yang tertera di struk.
   final double pajakPersenSaran;
 
-  /// Saran nominal service untuk layar review.
-  final int serviceSaran;
+  /// Saran persen service untuk layar review.
+  final double servicePersenSaran;
+
+  /// Pajak dihitung dari (subtotal + service), bukan subtotal saja. Umum di
+  /// restoran: PB1 10% dikenakan setelah service charge.
+  final bool pajakDenganService;
 
   /// Baris-baris hasil pengelompokan OCR (berguna untuk debug).
   final List<String> rows;
@@ -79,7 +83,8 @@ class ReceiptParseResult {
     this.diskonTotal = 0,
     this.pajakTermasuk = false,
     this.pajakPersenSaran = 0,
-    this.serviceSaran = 0,
+    this.servicePersenSaran = 0,
+    this.pajakDenganService = false,
     this.rows = const [],
   });
 
@@ -218,6 +223,8 @@ final _paymentRe = _re(
 
 final _noiseRe = _re(r'(\bnpwp\b|\btelp?\b\.?|\btlp\b|\bphone\b|\bhp\b\s*[:.]|\bfax\b|\bwa\b\s*[:.]|whatsapp|'
     r'www\.|https?:|\.com\b|\.co\.id\b|\.id\b|@[a-z][\w.]*\.[a-z]|instagram|\big\s*:|'
+    r'\bkabupaten\b|\bkecamatan\b|\bkelurahan\b|\bprovinsi\b|\bdesa\b|\bdki\b|\bindonesia\b|\binfo\b\s*:|,.*\b\d{5}\s*$|'
+    r'\b(jawa|sumatera|sumatra|kalimantan|sulawesi|papua|nusa\s*tenggara)\s+(barat|timur|tengah|utara|selatan)\b|'
     r'\bjl\b\.?|\bjln\b|\bjalan\b|\bkel\b\.|\bkec\b\.|\bkab\b\.|\bkota\b|\bprov\b|\bruko\b|\blantai\b|\blt\b\.|\bblok\b|\brt\b\s*\d|\brw\b\s*\d|\bkode\s*pos\b|'
     r'\bkasir\b|\bcashier\b|\bwaiter\b|\bwaitress\b|\bserver\b|\bpelayan\b|\boperator\b|\bshift\b|\bcs\b\s*:|\bcust\w*\b|\bpelanggan\b|\bnama\s*:|'
     r'\bmeja\b|\btable\b|\btbl\b|\bpax\b|\bguest\w*\b|\btamu\b|\bcovers?\b|'
@@ -619,10 +626,36 @@ ReceiptParseResult parseReceiptRows(List<String> rawRows) {
 
   final rows = rawRows.map(normalizeRow).toList();
 
-  for (final row in rows) {
+  bool footerAhead(int from) {
+    var seen = 0;
+    for (var j = from + 1; j < rows.length && seen < 3; j++) {
+      final r = rows[j];
+      if (r.isEmpty || _separatorOnlyRe.hasMatch(r)) continue;
+      seen++;
+      final l = canonicalLabel(r.toLowerCase());
+      if (_taxRe.hasMatch(l) || _serviceRe.hasMatch(l) || _totalRe.hasMatch(l) ||
+          _subtotalRe.hasMatch(l) || _discountRe.hasMatch(l)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Baris "nama + nominal" yang nominalnya sama dengan jumlah semua item
+  /// sebelumnya dan diikuti baris pajak/service/total -> itu subtotal yang
+  /// labelnya salah terbaca OCR (mis. "Subtc tal"), bukan menu.
+  bool looksLikeHiddenSubtotal(int index, String labelText, int qty, int amount) {
+    if (items.length < 2 || qty != 1) return false;
+    final sum = items.fold(0, (s, it) => s + it.total);
+    if ((amount - sum).abs() > math.max(2, sum * 0.002)) return false;
+    return labelText.trimRight().endsWith(':') || footerAhead(index);
+  }
+
+  for (var ri = 0; ri < rows.length; ri++) {
+    final row = rows[ri];
     rowsSinceLastItem++;
     if (row.isEmpty || _separatorOnlyRe.hasMatch(row)) continue;
-    final lower = row.toLowerCase();
+    final lower = canonicalLabel(row.toLowerCase());
 
     if (_taxInclusiveRe.hasMatch(lower)) {
       pajakTermasuk = true;
@@ -753,6 +786,18 @@ ReceiptParseResult parseReceiptRows(List<String> rawRows) {
     // --- Baris item -------------------------------------------------------
     final parsed = _parseItemRow(row);
 
+    if (parsed.total != null && parsed.total! > 0 &&
+        looksLikeHiddenSubtotal(
+            ri,
+            parsed.hasName ? row.split(RegExp(r'\d')).first : (pendingName ?? ''),
+            parsed.qty ?? 1,
+            parsed.total!)) {
+      subtotal ??= parsed.total;
+      inFooter = true;
+      pendingName = null;
+      continue;
+    }
+
     if (parsed.hasName) {
       if (parsed.total != null && parsed.total! > 0) {
         addItem(parsed.name, parsed.qty ?? 1, parsed.total!);
@@ -799,14 +844,16 @@ ReceiptParseResult parseReceiptRows(List<String> rawRows) {
       : (subtotal ?? itemsSum);
   final base = math.max(baseSubtotal - globalDiscount, 0);
 
-  var serviceSaran = serviceNominal ?? 0;
-  if (serviceSaran == 0 && servicePersen != null) {
-    serviceSaran = (base * servicePersen / 100).round();
-  }
+  final serviceNom = (serviceNominal ?? 0) > 0
+      ? serviceNominal!
+      : (servicePersen != null ? (base * servicePersen / 100).round() : 0);
+  final servicePersenSaran = (serviceNom > 0 && base > 0)
+      ? _niceRate(serviceNom / base * 100, servicePersen)
+      : 0.0;
 
   // Deteksi harga sudah termasuk pajak dengan mencocokkan ke total struk.
   if (!pajakTermasuk && total != null && (pajakNominal ?? 0) > 0) {
-    final tanpaPajak = base + serviceSaran;
+    final tanpaPajak = base + serviceNom;
     final denganPajak = tanpaPajak + pajakNominal!;
     if ((total - tanpaPajak).abs() < (total - denganPajak).abs() &&
         (total - tanpaPajak).abs() <= math.max(total * 0.01, 100)) {
@@ -814,13 +861,28 @@ ReceiptParseResult parseReceiptRows(List<String> rawRows) {
     }
   }
 
+  // Dasar pajak: subtotal saja, atau subtotal + service. Pilih yang
+  // menghasilkan tarif "wajar" (10%, 11%, ...) atau yang cocok dengan total.
   double pajakSaran = 0;
+  var pajakDenganService = false;
   if (pajakTermasuk) {
     pajakSaran = 0;
   } else if ((pajakNominal ?? 0) > 0 && base > 0) {
-    pajakSaran = (pajakNominal! / base * 10000).round() / 100;
+    final r1 = pajakNominal! / base * 100;
+    final r2 = serviceNom > 0 ? pajakNominal / (base + serviceNom) * 100 : double.infinity;
+    pajakDenganService =
+        serviceNom > 0 && _rateScore(r2, pajakPersen) < _rateScore(r1, pajakPersen);
+    pajakSaran = _niceRate(pajakDenganService ? r2 : r1, pajakPersen);
   } else if (pajakPersen != null) {
     pajakSaran = pajakPersen;
+    if (serviceNom > 0) {
+      pajakDenganService = true; // kebiasaan umum restoran di Indonesia
+      if (total != null) {
+        final tanpa = base + serviceNom + base * pajakPersen / 100;
+        final dengan = base + serviceNom + (base + serviceNom) * pajakPersen / 100;
+        pajakDenganService = (total - dengan).abs() <= (total - tanpa).abs();
+      }
+    }
   } else if (adaBarisPajak && pajakNominal == null && serviceNominal == null && servicePersen == null) {
     pajakSaran = 10;
   }
@@ -837,7 +899,76 @@ ReceiptParseResult parseReceiptRows(List<String> rawRows) {
     diskonTotal: globalDiscount,
     pajakTermasuk: pajakTermasuk,
     pajakPersenSaran: pajakSaran,
-    serviceSaran: serviceSaran,
+    servicePersenSaran: servicePersenSaran,
+    pajakDenganService: pajakDenganService,
     rows: rows,
   );
+}
+
+const _tarifUmum = [10.0, 11.0, 12.0, 5.0, 2.5, 7.5, 8.0, 7.0, 6.0, 15.0];
+
+/// Seberapa jauh tarif dari tarif yang lazim (makin kecil makin wajar).
+double _rateScore(double rate, double? tertulis) {
+  if (!rate.isFinite) return double.infinity;
+  if (tertulis != null) return (rate - tertulis).abs();
+  return _tarifUmum.map((t) => (rate - t).abs()).reduce(math.min);
+}
+
+/// Bulatkan tarif kalau dekat angka bulat/setengah (selisih karena pembulatan
+/// rupiah di struk); kalau tidak, simpan 2 desimal supaya nominalnya pas.
+double _niceRate(double rate, double? tertulis) {
+  if (tertulis != null && (rate - tertulis).abs() <= 0.1) return tertulis;
+  if ((rate - rate.roundToDouble()).abs() <= 0.05) return rate.roundToDouble();
+  final half = (rate * 2).roundToDouble() / 2;
+  if ((rate - half).abs() <= 0.03) return half;
+  return (rate * 100).round() / 100;
+}
+
+/// Kata kunci label ringkasan + toleransi salah huruf (edit distance).
+const _labelKeywords = {
+  'subtotal': 2,
+  'grandtotal': 2,
+  'total': 1,
+  'service': 1,
+  'discount': 1,
+  'diskon': 1,
+  'pajak': 1,
+};
+
+/// Perbaiki label ringkasan yang salah baca OCR di awal baris, mis.
+/// "subtc tal :" -> "subtotal :", "grand tota1" -> "grand total", "servlce" -> "service".
+String canonicalLabel(String lower) {
+  final m = RegExp(r'^([a-z0-9]+)(\s+[a-z0-9]+)?').firstMatch(lower);
+  if (m == null) return lower;
+  final w1 = m[1]!;
+  final w2 = m[2]?.trim();
+  if (_labelKeywords.containsKey(w1)) return lower; // sudah benar
+  for (final useTwo in [true, false]) {
+    if (useTwo && w2 == null) continue;
+    final cand = useTwo ? '$w1$w2' : w1;
+    if (cand.length < 5 || !RegExp(r'[a-z]').hasMatch(cand)) continue;
+    for (final e in _labelKeywords.entries) {
+      if ((cand.length - e.key.length).abs() > e.value) continue;
+      final d = _levenshtein(cand, e.key);
+      if (d <= e.value && d < e.key.length / 3) {
+        final label = e.key == 'grandtotal' ? 'grand total' : e.key;
+        final consumed = useTwo ? m[0]!.length : w1.length;
+        return label + lower.substring(consumed);
+      }
+    }
+  }
+  return lower;
+}
+
+int _levenshtein(String a, String b) {
+  var prev = List<int>.generate(b.length + 1, (i) => i);
+  for (var i = 1; i <= a.length; i++) {
+    final cur = List<int>.filled(b.length + 1, 0)..[0] = i;
+    for (var j = 1; j <= b.length; j++) {
+      final cost = a[i - 1] == b[j - 1] ? 0 : 1;
+      cur[j] = math.min(math.min(cur[j - 1] + 1, prev[j] + 1), prev[j - 1] + cost);
+    }
+    prev = cur;
+  }
+  return prev[b.length];
 }

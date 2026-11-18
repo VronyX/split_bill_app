@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../models/bill_charges.dart';
 import '../models/receipt_item.dart';
 import '../models/assign_group.dart';
 import '../theme/app_theme.dart';
@@ -7,29 +8,21 @@ class SummaryScreen extends StatelessWidget {
   final List<ReceiptItem> items;
   final List<String> people;
   final Map<int, List<AssignGroup>> assignments;
-  final double pajakPersen;
-  final int serviceTotal;
-  final int diskonTotal;
+  final BillCharges charges;
 
   const SummaryScreen({
     super.key,
     required this.items,
     required this.people,
     required this.assignments,
-    required this.pajakPersen,
-    required this.serviceTotal,
-    this.diskonTotal = 0,
+    required this.charges,
   });
 
   @override
   Widget build(BuildContext context) {
     final subtotal = items.fold(0, (sum, it) => sum + it.total);
-    final int diskon = diskonTotal < 0 ? 0 : (diskonTotal > subtotal ? subtotal : diskonTotal);
-    final pajakTotal = (subtotal - diskon) * (pajakPersen / 100);
-    final grandTotal = subtotal - diskon + pajakTotal + serviceTotal;
-    // Diskon transaksi dibagi proporsional sesuai pesanan masing-masing.
-    final rasioDiskon = subtotal == 0 ? 0.0 : diskon / subtotal;
-    final serviceEach = people.isEmpty ? 0 : serviceTotal / people.length;
+    final grandTotal =
+        charges.hitung(subtotal.toDouble(), subtotalSemua: subtotal.toDouble()).total;
 
     return Scaffold(
       appBar: AppBar(
@@ -45,7 +38,7 @@ class SummaryScreen extends StatelessWidget {
               children: [
                 const Text('Total tagihan', style: TextStyle(color: AppColors.muted, fontSize: 12)),
                 Text(
-                  'Rp ${grandTotal.round()}',
+                  formatRupiah(grandTotal),
                   style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
                 ),
               ],
@@ -70,13 +63,14 @@ class SummaryScreen extends StatelessWidget {
 
                 final qtyLabel = it.qty > 1 ? " x${it.qty}" : "";
                 final shareLabel = g.people.length > 1 ? ' (patungan berdua)' : '';
-                lines.add('${it.nama}$qtyLabel$shareLabel  —  Rp ${share.round()}');
+                lines.add('${it.nama}$qtyLabel$shareLabel  —  ${formatRupiah(share)}');
               }
             }
 
-            final myDiskon = mySubtotal * rasioDiskon;
-            final myPajak = (mySubtotal - myDiskon) * (pajakPersen / 100);
-            final myTotal = mySubtotal - myDiskon + myPajak + serviceEach;
+            // Diskon, service & pajak dibagi proporsional sesuai pesanan
+            // masing-masing (sama seperti cara struk menghitungnya).
+            final rincian = charges.hitung(mySubtotal, subtotalSemua: subtotal.toDouble());
+            final myTotal = rincian.total;
 
             return Container(
               margin: const EdgeInsets.only(bottom: 12),
@@ -102,7 +96,7 @@ class SummaryScreen extends StatelessWidget {
                       Expanded(
                         child: Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
                       ),
-                      Text('Rp ${myTotal.round()}',
+                      Text(formatRupiah(myTotal),
                           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                     ],
                   ),
@@ -116,8 +110,8 @@ class SummaryScreen extends StatelessWidget {
                   )),
                   const Divider(height: 16),
                   Text(
-                      '${myDiskon > 0 ? 'Diskon: -Rp ${myDiskon.round()}   •   ' : ''}'
-                      'Pajak: Rp ${myPajak.round()}   •   Service: Rp ${serviceEach.round()}',
+                      '${rincian.diskon > 0 ? 'Diskon: -${formatRupiah(rincian.diskon)}   •   ' : ''}'
+                      'Service: ${formatRupiah(rincian.service)}   •   Pajak: ${formatRupiah(rincian.pajak)}',
                       style: const TextStyle(fontSize: 11, color: AppColors.muted)),
                 ],
               ),
