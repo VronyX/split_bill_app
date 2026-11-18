@@ -13,7 +13,7 @@ class SplitBillApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Yuk Hitung-hitungan Kita',
+      title: 'Split Bill',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
       home: const UploadScreen(),

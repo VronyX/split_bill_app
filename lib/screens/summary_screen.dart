@@ -1,123 +1,194 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
 import '../models/bill_charges.dart';
 import '../models/receipt_item.dart';
-import '../models/assign_group.dart';
+import '../models/split.dart';
 import '../theme/app_theme.dart';
+import '../widgets/common.dart';
 
+/// Langkah 4: hasil akhir per orang.
 class SummaryScreen extends StatelessWidget {
   final List<ReceiptItem> items;
   final List<String> people;
-  final Map<int, List<AssignGroup>> assignments;
+  final Portions portions;
   final BillCharges charges;
 
   const SummaryScreen({
     super.key,
     required this.items,
     required this.people,
-    required this.assignments,
+    required this.portions,
     required this.charges,
   });
 
+  SplitSummary get _summary =>
+      hitungPembagian(items: items, people: people, portions: portions, charges: charges);
+
+  Future<void> _salin(BuildContext context, SplitSummary s) async {
+    await Clipboard.setData(ClipboardData(text: ringkasanTeks(s)));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(const SnackBar(content: Text('Ringkasan disalin. Tempel di grup chat ya!')));
+  }
+
   @override
   Widget build(BuildContext context) {
-    final subtotal = items.fold(0, (sum, it) => sum + it.total);
-    final grandTotal =
-        charges.hitung(subtotal.toDouble(), subtotalSemua: subtotal.toDouble()).total;
+    final s = _summary;
+    final t = s.tagihan;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Ringkasan'),
-        backgroundColor: AppColors.ink,
-        foregroundColor: AppColors.paper,
+        title: const Text('Hasil'),
+        bottom: const StepIndicator(current: 3),
       ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
         children: [
-          Center(
-            child: Column(
-              children: [
-                const Text('Total tagihan', style: TextStyle(color: AppColors.muted, fontSize: 12)),
-                Text(
-                  formatRupiah(grandTotal),
-                  style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
-                ),
-              ],
+          _TotalCard(tagihan: t, jumlahOrang: people.length),
+          const SizedBox(height: 16),
+          if (s.unassigned.isNotEmpty) ...[
+            InfoBanner(
+              text: '${s.unassigned.length} item belum dibagi '
+                  '(${s.unassigned.map((e) => e.nama).join(', ')}). '
+                  'Kembali untuk memilih siapa yang bayar.',
+              icon: Icons.warning_amber_rounded,
             ),
-          ),
-          const SizedBox(height: 20),
-          ...people.map((name) {
-            final lines = <String>[];
-            double mySubtotal = 0;
-
-            for (final it in items) {
-              final groups = assignments[it.id] ?? [];
-              final totalUnits = groups.fold(0, (s, g) => s + g.units);
-              if (totalUnits == 0) continue;
-              final pricePerUnit = it.total / totalUnits;
-
-              for (final g in groups) {
-                if (!g.people.contains(name)) continue;
-                final groupCost = g.units * pricePerUnit;
-                final share = groupCost / g.people.length;
-                mySubtotal += share;
-
-                final qtyLabel = it.qty > 1 ? " x${it.qty}" : "";
-                final shareLabel = g.people.length > 1 ? ' (patungan berdua)' : '';
-                lines.add('${it.nama}$qtyLabel$shareLabel  —  ${formatRupiah(share)}');
-              }
-            }
-
-            // Diskon, service & pajak dibagi proporsional sesuai pesanan
-            // masing-masing (sama seperti cara struk menghitungnya).
-            final rincian = charges.hitung(mySubtotal, subtotalSemua: subtotal.toDouble());
-            final myTotal = rincian.total;
-
-            return Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: AppColors.paperDark,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      CircleAvatar(
-                        radius: 13,
-                        backgroundColor: AppColors.stamp,
-                        child: Text(
-                          name.substring(0, 1).toUpperCase(),
-                          style: const TextStyle(color: AppColors.paper, fontSize: 11),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                      ),
-                      Text(formatRupiah(myTotal),
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  if (lines.isEmpty)
-                    const Text('Tidak pesan apa-apa',
-                        style: TextStyle(fontStyle: FontStyle.italic, color: AppColors.muted, fontSize: 12)),
-                  ...lines.map((l) => Padding(
-                    padding: const EdgeInsets.only(bottom: 2),
-                    child: Text(l, style: const TextStyle(fontSize: 12, color: AppColors.muted)),
-                  )),
-                  const Divider(height: 16),
-                  Text(
-                      '${rincian.diskon > 0 ? 'Diskon: -${formatRupiah(rincian.diskon)}   •   ' : ''}'
-                      'Service: ${formatRupiah(rincian.service)}   •   Pajak: ${formatRupiah(rincian.pajak)}',
-                      style: const TextStyle(fontSize: 11, color: AppColors.muted)),
-                ],
-              ),
-            );
-          }),
+            const SizedBox(height: 12),
+          ],
+          for (final p in s.people) ...[
+            _PersonCard(share: p),
+            const SizedBox(height: 10),
+          ],
         ],
+      ),
+      bottomNavigationBar: BottomActionBar(
+        child: Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.of(context).popUntil((r) => r.isFirst),
+                child: const Text('Selesai'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              flex: 2,
+              child: FilledButton.icon(
+                onPressed: () => _salin(context, s),
+                icon: const Icon(Icons.copy_rounded, size: 20),
+                label: const Text('Salin ringkasan'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TotalCard extends StatelessWidget {
+  final ChargeBreakdown tagihan;
+  final int jumlahOrang;
+  const _TotalCard({required this.tagihan, required this.jumlahOrang});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(color: AppColors.ink, borderRadius: BorderRadius.circular(18)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Total tagihan · $jumlahOrang orang',
+              style: const TextStyle(color: Colors.white70, fontSize: 13)),
+          const SizedBox(height: 4),
+          Text(formatRupiah(tagihan.total),
+              style: const TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.w800, letterSpacing: -0.5)),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 14,
+            runSpacing: 4,
+            children: [
+              _mini('Subtotal', formatRupiah(tagihan.subtotal)),
+              if (tagihan.diskon > 0) _mini('Diskon', '-${formatRupiah(tagihan.diskon)}'),
+              if (tagihan.service > 0) _mini('Service', formatRupiah(tagihan.service)),
+              if (tagihan.pajak > 0) _mini('Pajak', formatRupiah(tagihan.pajak)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _mini(String label, String value) => Text.rich(
+        TextSpan(children: [
+          TextSpan(text: '$label ', style: const TextStyle(color: Colors.white60)),
+          TextSpan(text: value, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+        ]),
+        style: const TextStyle(fontSize: 12.5),
+      );
+}
+
+class _PersonCard extends StatelessWidget {
+  final PersonShare share;
+  const _PersonCard({required this.share});
+
+  @override
+  Widget build(BuildContext context) {
+    final r = share.rincian;
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+          childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+          leading: PersonAvatar(name: share.name, color: AppColors.person(share.index), size: 38),
+          title: Text(share.name, style: const TextStyle(fontWeight: FontWeight.w700)),
+          subtitle: Text(
+            share.lines.isEmpty ? 'Tidak pesan apa-apa' : '${share.lines.length} item',
+            style: const TextStyle(fontSize: 12.5),
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(formatRupiah(share.total),
+                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+              const SizedBox(width: 4),
+              const Icon(Icons.expand_more_rounded, color: AppColors.muted),
+            ],
+          ),
+          children: [
+            const Divider(),
+            const SizedBox(height: 6),
+            for (final l in share.lines)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text.rich(TextSpan(children: [
+                        TextSpan(text: l.itemName),
+                        if (l.keterangan.isNotEmpty)
+                          TextSpan(
+                            text: '  ${l.keterangan}',
+                            style: const TextStyle(color: AppColors.muted, fontSize: 12),
+                          ),
+                      ])),
+                    ),
+                    Text(formatRupiah(l.amount)),
+                  ],
+                ),
+              ),
+            if (r.diskon > 0)
+              AmountRow(label: 'Diskon', value: '-${formatRupiah(r.diskon)}', valueColor: AppColors.success),
+            if (r.service > 0) AmountRow(label: 'Service', value: formatRupiah(r.service)),
+            if (r.pajak > 0) AmountRow(label: 'Pajak', value: formatRupiah(r.pajak)),
+          ],
+        ),
       ),
     );
   }

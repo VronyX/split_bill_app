@@ -1,10 +1,17 @@
 import 'package:flutter/material.dart';
+
 import '../models/bill_charges.dart';
 import '../models/receipt_item.dart';
-import '../models/assign_group.dart';
+import '../models/split.dart';
+import '../theme/app_route.dart';
 import '../theme/app_theme.dart';
+import '../widgets/common.dart';
 import 'summary_screen.dart';
 
+/// Langkah 3: siapa makan apa.
+///
+/// Ketuk nama di tiap item. Kalau beberapa orang dipilih, item dibagi rata.
+/// "Atur porsi" untuk pembagian tidak rata (mis. Es Teh x3: Andi 1, Budi 2).
 class AssignScreen extends StatefulWidget {
   final List<ReceiptItem> items;
   final List<String> people;
@@ -22,284 +29,405 @@ class AssignScreen extends StatefulWidget {
 }
 
 class _AssignScreenState extends State<AssignScreen> {
-  // key: item.id, value: daftar grup (orang + jumlah unit) yang makan item itu
-  final Map<int, List<AssignGroup>> _assignments = {};
+  final Portions _portions = {};
 
-  // mode "gabung/patungan" sedang aktif untuk item id berapa (null = tidak aktif)
-  int? _linkingItemId;
-  final Set<String> _pendingLink = {};
+  Map<String, int> _of(ReceiptItem item) => _portions.putIfAbsent(item.id, () => {});
 
-  static const _groupColors = [
-    Color(0xFFC1440E),
-    Color(0xFF4B7B5B),
-    Color(0xFF3D6B99),
-    Color(0xFF9A5EB5),
-    Color(0xFFB48A2E),
-    Color(0xFFB4463A),
-  ];
+  bool _isAssigned(ReceiptItem item) => (_portions[item.id] ?? {}).values.any((v) => v > 0);
 
-  AssignGroup? _findGroup(int itemId, String name) {
-    final groups = _assignments[itemId] ?? [];
-    for (final g in groups) {
-      if (g.people.contains(name)) return g;
-    }
-    return null;
-  }
+  int get _assignedCount => widget.items.where(_isAssigned).length;
 
-  void _removeFromGroups(int itemId, String name) {
-    final groups = _assignments[itemId];
-    if (groups == null) return;
-    for (final g in List.of(groups)) {
-      if (g.people.contains(name)) {
-        g.people.remove(name);
-        if (g.people.isEmpty) groups.remove(g);
-      }
-    }
-  }
+  Color _colorOf(String name) => AppColors.person(widget.people.indexOf(name));
 
-  void _tapPerson(int itemId, String name) {
+  void _toggle(ReceiptItem item, String name) {
     setState(() {
-      if (_linkingItemId == itemId) {
-        // mode gabung aktif: tap = toggle pending selection
-        if (_pendingLink.contains(name)) {
-          _pendingLink.remove(name);
-        } else {
-          _pendingLink.add(name);
-        }
-        return;
-      }
-      final existing = _findGroup(itemId, name);
-      if (existing != null) {
-        _removeFromGroups(itemId, name);
+      final map = _of(item);
+      if ((map[name] ?? 0) > 0) {
+        map.remove(name);
       } else {
-        final groups = _assignments.putIfAbsent(itemId, () => []);
-        groups.add(AssignGroup(people: {name}, units: 1));
+        map[name] = 1;
       }
     });
   }
 
-  void _toggleLinkMode(int itemId) {
+  void _selectAll(ReceiptItem item) {
     setState(() {
-      if (_linkingItemId == itemId) {
-        // selesai mode gabung -> finalisasi grup kalau minimal 2 orang dipilih
-        if (_pendingLink.length >= 2) {
-          for (final name in _pendingLink) {
-            _removeFromGroups(itemId, name);
-          }
-          final groups = _assignments.putIfAbsent(itemId, () => []);
-          groups.add(AssignGroup(people: Set.of(_pendingLink), units: 1));
-        }
-        _linkingItemId = null;
-        _pendingLink.clear();
+      final map = _of(item);
+      final allSelected = widget.people.every((p) => (map[p] ?? 0) > 0);
+      if (allSelected) {
+        map.clear();
       } else {
-        _linkingItemId = itemId;
-        _pendingLink.clear();
+        for (final p in widget.people) {
+          map[p] = (map[p] ?? 0) > 0 ? map[p]! : 1;
+        }
       }
     });
   }
 
-  Future<void> _editUnits(int itemId, AssignGroup group) async {
-    int temp = group.units;
-    final result = await showDialog<int>(
+  void _splitRemainingEvenly() {
+    setState(() {
+      for (final item in widget.items.where((it) => !_isAssigned(it))) {
+        _of(item)
+          ..clear()
+          ..addAll({for (final p in widget.people) p: 1});
+      }
+    });
+  }
+
+  Future<void> _editPortions(ReceiptItem item) async {
+    final result = await showModalBottomSheet<Map<String, int>>(
       context: context,
-      builder: (context) {
-        return StatefulBuilder(builder: (context, setLocal) {
-          return AlertDialog(
-            title: Text('Jumlah pesanan\n${group.people.join(", ")}'),
-            content: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.remove_circle_outline),
-                  onPressed: temp > 1 ? () => setLocal(() => temp--) : null,
-                ),
-                Text('$temp', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                IconButton(
-                  icon: const Icon(Icons.add_circle_outline),
-                  onPressed: () => setLocal(() => temp++),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, 0),
-                child: const Text('Hapus', style: TextStyle(color: Color(0xFFB4463A))),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(context, temp),
-                child: const Text('Simpan'),
-              ),
-            ],
-          );
-        });
-      },
+      isScrollControlled: true,
+      builder: (_) => _PortionEditor(
+        item: item,
+        people: widget.people,
+        initial: Map.of(_of(item)),
+        colorOf: _colorOf,
+      ),
     );
     if (result == null) return;
     setState(() {
-      if (result <= 0) {
-        _assignments[itemId]?.remove(group);
-      } else {
-        group.units = result;
-      }
+      _of(item)
+        ..clear()
+        ..addAll(Map.fromEntries(result.entries.where((e) => e.value > 0)));
     });
   }
 
-  int _totalUnits(int itemId) =>
-      (_assignments[itemId] ?? []).fold(0, (s, g) => s + g.units);
-
-  Color _colorForGroup(AssignGroup group) {
-    final key = (group.people.toList()..sort()).join(',');
-    final idx = key.hashCode.abs() % _groupColors.length;
-    return _groupColors[idx];
+  Future<void> _lihatHasil() async {
+    final sisa = widget.items.length - _assignedCount;
+    if (sisa > 0) {
+      final pilihan = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('$sisa item belum dibagi'),
+          content: const Text('Item yang belum dibagi bisa dibagi rata ke semua orang.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Pilih sendiri'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Bagi rata'),
+            ),
+          ],
+        ),
+      );
+      if (pilihan != true || !mounted) return;
+      _splitRemainingEvenly();
+    }
+    if (!mounted) return;
+    Navigator.of(context).push(slideRoute(SummaryScreen(
+      items: widget.items,
+      people: widget.people,
+      portions: {for (final e in _portions.entries) e.key: Map.of(e.value)},
+      charges: widget.charges,
+    )));
   }
-
-  int get _unassignedCount =>
-      widget.items.where((it) => (_assignments[it.id] ?? []).isEmpty).length;
 
   @override
   Widget build(BuildContext context) {
+    final total = widget.items.length;
+    final done = _assignedCount;
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Bagi Item'),
-        backgroundColor: AppColors.ink,
-        foregroundColor: AppColors.paper,
+        title: const Text('Siapa makan apa?'),
+        bottom: const StepIndicator(current: 2),
       ),
-      body: ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: widget.items.length,
+      body: ListView.separated(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+        itemCount: total + 1,
+        separatorBuilder: (_, i) => SizedBox(height: i == 0 ? 14 : 10),
         itemBuilder: (context, index) {
-          final item = widget.items[index];
-          final groups = _assignments[item.id] ?? [];
-          final totalUnits = _totalUnits(item.id);
-          final pricePerUnit = totalUnits > 0 ? item.total / totalUnits : 0.0;
-          final isLinking = _linkingItemId == item.id;
+          if (index == 0) return _progressHeader(done, total);
+          return _itemCard(widget.items[index - 1]);
+        },
+      ),
+      bottomNavigationBar: BottomActionBar(
+        child: FilledButton(
+          onPressed: _lihatHasil,
+          child: Text(done == total ? 'Lihat hasil' : 'Lihat hasil ($done/$total dibagi)'),
+        ),
+      ),
+    );
+  }
 
-          return Container(
-            margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: AppColors.paperDark,
-              borderRadius: BorderRadius.circular(10),
-              border: isLinking ? Border.all(color: AppColors.stamp, width: 1.4) : null,
+  Widget _progressHeader(int done, int total) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Ketuk nama di tiap menu. Pilih beberapa orang = patungan rata.',
+            style: TextStyle(color: AppColors.muted, fontSize: 13, height: 1.35)),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: total == 0 ? 0 : done / total,
+                  minHeight: 6,
+                  backgroundColor: AppColors.border,
+                  color: done == total ? AppColors.success : AppColors.accent,
+                ),
+              ),
             ),
-            child: Column(
+            const SizedBox(width: 10),
+            Text('$done/$total', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+          ],
+        ),
+        if (done < total)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              style: TextButton.styleFrom(padding: EdgeInsets.zero, visualDensity: VisualDensity.compact),
+              onPressed: _splitRemainingEvenly,
+              icon: const Icon(Icons.groups_2_outlined, size: 18),
+              label: const Text('Bagi rata semua yang belum dipilih'),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _itemCard(ReceiptItem item) {
+    final map = _portions[item.id] ?? const <String, int>{};
+    final selected = widget.people.where((p) => (map[p] ?? 0) > 0).toList();
+    final totalPorsi = selected.fold<int>(0, (s, p) => s + map[p]!);
+    final rata = selected.every((p) => map[p] == map[selected.first]);
+    final semua = selected.length == widget.people.length;
+
+    String? keterangan;
+    if (selected.length == 1) {
+      keterangan = '${selected.first} bayar ${formatRupiah(item.total)}';
+    } else if (selected.length > 1 && rata) {
+      keterangan = '${selected.length} orang · ${formatRupiah(item.total / selected.length)}/orang';
+    } else if (selected.length > 1) {
+      keterangan = selected
+          .map((p) => '${p.split(' ').first} ${formatRupiah(item.total * map[p]! / totalPorsi)}')
+          .join(' · ');
+    }
+
+    return Card(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: selected.isEmpty ? AppColors.border : AppColors.success.withValues(alpha: 0.5)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        '${item.nama}${item.qty > 1 ? " x${item.qty}" : ""}',
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                      ),
-                    ),
-                    Text('Rp ${item.total}',
-                        style: const TextStyle(color: AppColors.muted, fontSize: 12)),
-                    IconButton(
-                      icon: Icon(Icons.link,
-                          size: 18, color: isLinking ? AppColors.stamp : AppColors.muted),
-                      tooltip: 'Gabung/patungan',
-                      onPressed: () => _toggleLinkMode(item.id),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                    ),
-                  ],
+                Icon(
+                  selected.isEmpty ? Icons.radio_button_unchecked : Icons.check_circle,
+                  size: 20,
+                  color: selected.isEmpty ? AppColors.border : AppColors.success,
                 ),
-                if (isLinking)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 4, bottom: 4),
-                    child: Text(
-                      'Pilih orang yang patungan, lalu tap ikon 🔗 lagi untuk selesai.',
-                      style: TextStyle(fontSize: 11, color: AppColors.stamp),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    item.qty > 1 ? '${item.nama} ×${item.qty}' : item.nama,
+                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+                  ),
+                ),
+                Text(formatRupiah(item.total), style: const TextStyle(fontWeight: FontWeight.w600)),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final name in widget.people)
+                  _PersonChip(
+                    name: name,
+                    color: _colorOf(name),
+                    selected: (map[name] ?? 0) > 0,
+                    portions: rata ? null : map[name],
+                    onTap: () => _toggle(item, name),
+                  ),
+                if (widget.people.length > 1)
+                  ActionChip(
+                    onPressed: () => _selectAll(item),
+                    avatar: Icon(semua ? Icons.close_rounded : Icons.done_all_rounded, size: 18),
+                    label: Text(semua ? 'Kosongkan' : 'Semua'),
+                    shape: const StadiumBorder(side: BorderSide(color: AppColors.border)),
+                    backgroundColor: AppColors.surface,
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    keterangan ?? 'Belum dipilih',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      color: keterangan == null ? AppColors.muted : AppColors.ink,
                     ),
                   ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: widget.people.map((name) {
-                    final group = _findGroup(item.id, name);
-                    final isPending = isLinking && _pendingLink.contains(name);
-                    final isSelected = group != null || isPending;
-                    final isShared = group != null && group.people.length > 1;
-
-                    Color? bgColor;
-                    Color textColor = AppColors.ink;
-                    if (isPending) {
-                      bgColor = AppColors.stamp.withValues(alpha: 0.5);
-                      textColor = AppColors.paper;
-                    } else if (group != null) {
-                      bgColor = isShared ? _colorForGroup(group) : AppColors.stamp;
-                      textColor = AppColors.paper;
-                    }
-
-                    var label = name;
-                    if (group != null && group.people.length == 1 && group.units > 1) {
-                      label = '$name x${group.units}';
-                    } else if (isShared) {
-                      label = '$name 🔗';
-                    }
-
-                    return GestureDetector(
-                      onLongPress: group != null ? () => _editUnits(item.id, group) : null,
-                      child: ChoiceChip(
-                        label: Text(label, style: const TextStyle(fontSize: 12)),
-                        selected: isSelected,
-                        onSelected: (_) => _tapPerson(item.id, name),
-                        selectedColor: bgColor,
-                        backgroundColor: AppColors.paper,
-                        labelStyle: TextStyle(color: isSelected ? textColor : AppColors.ink),
-                      ),
-                    );
-                  }).toList(),
                 ),
-                if (groups.isNotEmpty)
+                if (selected.isNotEmpty)
+                  TextButton(
+                    style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                    onPressed: () => _editPortions(item),
+                    child: const Text('Atur porsi'),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PersonChip extends StatelessWidget {
+  final String name;
+  final Color color;
+  final bool selected;
+  final int? portions;
+  final VoidCallback onTap;
+
+  const _PersonChip({
+    required this.name,
+    required this.color,
+    required this.selected,
+    required this.onTap,
+    this.portions,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final label = selected && portions != null ? '$name ×$portions' : name;
+    return Material(
+      color: selected ? color : AppColors.fill,
+      shape: const StadiumBorder(),
+      child: InkWell(
+        customBorder: const StadiumBorder(),
+        onTap: onTap,
+        child: AnimatedPadding(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.fromLTRB(4, 4, 12, 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              selected
+                  ? Container(
+                      width: 26,
+                      height: 26,
+                      decoration: const BoxDecoration(color: Colors.white24, shape: BoxShape.circle),
+                      child: const Icon(Icons.check, size: 16, color: Colors.white),
+                    )
+                  : PersonAvatar(name: name, color: color, size: 26),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13.5,
+                  color: selected ? Colors.white : AppColors.ink,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PortionEditor extends StatefulWidget {
+  final ReceiptItem item;
+  final List<String> people;
+  final Map<String, int> initial;
+  final Color Function(String) colorOf;
+
+  const _PortionEditor({
+    required this.item,
+    required this.people,
+    required this.initial,
+    required this.colorOf,
+  });
+
+  @override
+  State<_PortionEditor> createState() => _PortionEditorState();
+}
+
+class _PortionEditorState extends State<_PortionEditor> {
+  late final Map<String, int> _map = {for (final p in widget.people) p: widget.initial[p] ?? 0};
+
+  @override
+  Widget build(BuildContext context) {
+    final total = _map.values.fold<int>(0, (s, v) => s + v);
+    final maxHeight = MediaQuery.of(context).size.height * 0.6;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Atur porsi', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 4),
+          Text(
+            '${widget.item.nama}${widget.item.qty > 1 ? ' ×${widget.item.qty}' : ''} · ${formatRupiah(widget.item.total)}\n'
+            'Harga dibagi sesuai jumlah porsi tiap orang.',
+            style: const TextStyle(color: AppColors.muted, fontSize: 13, height: 1.4),
+          ),
+          const SizedBox(height: 12),
+          ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: maxHeight),
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                for (final p in widget.people)
                   Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: groups.map((g) {
-                        final groupCost = g.units * pricePerUnit;
-                        final perPerson = groupCost / g.people.length;
-                        final names = g.people.join(' & ');
-                        final unitLabel = g.people.length == 1 && g.units > 1 ? ' x${g.units}' : '';
-                        final shareLabel = g.people.length > 1
-                            ? ' (patungan, @Rp ${perPerson.round()})'
-                            : '';
-                        return Text(
-                          '$names$unitLabel — Rp ${groupCost.round()}$shareLabel',
-                          style: const TextStyle(fontSize: 11, color: AppColors.muted),
-                        );
-                      }).toList(),
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Row(
+                      children: [
+                        PersonAvatar(name: p, color: widget.colorOf(p), size: 34),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(p, style: const TextStyle(fontWeight: FontWeight.w600)),
+                              Text(
+                                total == 0 || _map[p] == 0
+                                    ? '—'
+                                    : formatRupiah(widget.item.total * _map[p]! / total),
+                                style: const TextStyle(color: AppColors.muted, fontSize: 12.5),
+                              ),
+                            ],
+                          ),
+                        ),
+                        QtyStepper(value: _map[p]!, onChanged: (v) => setState(() => _map[p] = v)),
+                      ],
                     ),
                   ),
               ],
             ),
-          );
-        },
-      ),
-      bottomNavigationBar: Padding(
-        padding: const EdgeInsets.all(16),
-        child: ElevatedButton(
-          onPressed: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => SummaryScreen(
-                  items: widget.items,
-                  people: widget.people,
-                  assignments: _assignments,
-                  charges: widget.charges,
-                ),
-              ),
-            );
-          },
-          child: Text(
-            _unassignedCount > 0
-                ? 'Lihat ringkasan ($_unassignedCount item belum dipilih)'
-                : 'Lihat ringkasan',
           ),
-        ),
+          const SizedBox(height: 12),
+          if (widget.item.qty > 1 && total > 0 && total != widget.item.qty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: InfoBanner(
+                text: 'Total porsi $total, sedangkan jumlah item ${widget.item.qty}. '
+                    'Tidak apa-apa, harga tetap dibagi sesuai perbandingan porsi.',
+              ),
+            ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, _map),
+            child: const Text('Simpan'),
+          ),
+        ],
       ),
     );
   }
