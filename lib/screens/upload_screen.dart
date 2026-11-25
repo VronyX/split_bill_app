@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
@@ -35,8 +36,19 @@ class _UploadScreenState extends State<UploadScreen> {
     await _processImage(path);
   }
 
+  // Batas ukuran gambar untuk OCR. Foto asli kamera HP sekarang bisa 50-200 MP;
+  // gambar sebesar itu bisa membuat ML Kit kehabisan memori dan gagal.
+  // 2000 x 4000 px masih jauh lebih dari cukup untuk tulisan struk.
+  static const _maxLebar = 2000.0;
+  static const _maxTinggi = 4000.0;
+
   Future<void> _pickFromGallery() async {
-    final pickedFile = await ImagePicker().pickImage(source: ImageSource.gallery);
+    final pickedFile = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      maxWidth: _maxLebar,
+      maxHeight: _maxTinggi,
+      imageQuality: 92,
+    );
     if (pickedFile == null) return;
     await _processImage(pickedFile.path);
   }
@@ -49,46 +61,116 @@ class _UploadScreenState extends State<UploadScreen> {
 
   Future<void> _processImage(String path) async {
     // 1. Crop dulu, biar fokus ke bagian menu sampai total.
-    final croppedFile = await ImageCropper().cropImage(
-      sourcePath: path,
-      uiSettings: [
-        AndroidUiSettings(
-          toolbarTitle: 'Potong dari menu sampai Total',
-          toolbarColor: AppColors.surface,
-          toolbarWidgetColor: AppColors.ink,
-          activeControlsWidgetColor: AppColors.accent,
-          statusBarLight: true,
-          lockAspectRatio: false,
-        ),
-        IOSUiSettings(
-          title: 'Potong dari menu sampai Total',
-          aspectRatioLockEnabled: false,
-        ),
-      ],
-    );
+    CroppedFile? croppedFile;
+    try {
+      croppedFile = await ImageCropper().cropImage(
+        sourcePath: path,
+        maxWidth: _maxLebar.toInt(),
+        maxHeight: _maxTinggi.toInt(),
+        compressFormat: ImageCompressFormat.jpg,
+        compressQuality: 92,
+        uiSettings: [
+          AndroidUiSettings(
+            toolbarTitle: 'Potong dari menu sampai Total',
+            toolbarColor: AppColors.surface,
+            toolbarWidgetColor: AppColors.ink,
+            activeControlsWidgetColor: AppColors.accent,
+            statusBarLight: true,
+            lockAspectRatio: false,
+          ),
+          IOSUiSettings(
+            title: 'Potong dari menu sampai Total',
+            aspectRatioLockEnabled: false,
+          ),
+        ],
+      );
+    } catch (e, st) {
+      _laporkanError('Gambar tidak bisa dibuka untuk dipotong.', e, st);
+      return;
+    }
     if (croppedFile == null) return;
 
     setState(() => _isProcessing = true);
 
-    // 2. OCR + parsing.
-    ReceiptParseResult result;
+    // 2. OCR.
+    RecognizedText recognizedText;
     try {
-      final inputImage = InputImage.fromFilePath(croppedFile.path);
-      final recognizedText = await _textRecognizer.processImage(inputImage);
-      result = parseReceipt(recognizedText);
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isProcessing = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Gagal membaca struk. Coba foto ulang dengan lebih terang.')),
-        );
-      }
+      recognizedText = await _textRecognizer.processImage(InputImage.fromFilePath(croppedFile.path));
+    } catch (e, st) {
+      if (mounted) setState(() => _isProcessing = false);
+      _laporkanError('Aplikasi gagal membaca gambar.', e, st);
       return;
     }
 
     if (!mounted) return;
+    if (recognizedText.text.trim().isEmpty) {
+      setState(() => _isProcessing = false);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Tidak ada tulisan yang terbaca. Pastikan struk tidak buram dan tulisannya terlihat jelas.'),
+      ));
+      return;
+    }
+
+    // 3. Parsing. Kalau gagal, tetap lanjut ke Review supaya bisa diisi manual.
+    ReceiptParseResult result;
+    try {
+      result = parseReceipt(recognizedText);
+    } catch (e, st) {
+      debugPrint('Parser struk gagal: $e\n$st');
+      result = ReceiptParseResult(items: [], adaBarisPajakTerpisah: false);
+    }
+
     setState(() => _isProcessing = false);
     Navigator.of(context).push(slideRoute(ReviewScreen(result: result)));
+  }
+
+  /// Tampilkan pesan yang jujur + detail teknis yang bisa disalin untuk
+  /// dilaporkan (bukan selalu "kurang terang").
+  void _laporkanError(String judul, Object error, StackTrace st) {
+    debugPrint('$judul $error\n$st');
+    if (!mounted) return;
+    final detail = '$error'.trim();
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(judul),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Coba lagi, atau isi item secara manual. Kalau terus terjadi, salin detail di bawah dan kirim ke pengembang.'),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              constraints: const BoxConstraints(maxHeight: 140),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(color: AppColors.fill, borderRadius: BorderRadius.circular(8)),
+              child: SingleChildScrollView(
+                child: SelectableText(detail, style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Clipboard.setData(ClipboardData(text: detail)),
+            child: const Text('Salin detail'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _manualEntry();
+            },
+            child: const Text('Isi manual'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Tutup'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override

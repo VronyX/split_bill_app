@@ -241,6 +241,43 @@ void main() {
     }
   });
 
+  group('struk asli: restoran Jepang, PB1 sudah termasuk', () {
+    test('Total Food/Beverage bukan item, PB1 inclusive', () {
+      final r = parseReceiptRows(_rows('''
+        Loyalty Member : Budi
+        Purpose : DINE IN
+        Cashier : M027 KASIR 1
+        Beef Curry Udon
+        1x @71.000 71.000
+        Chicken Katsu
+        2x @21.000 42.000
+        Cold Ocha
+        3x @17.000 51.000
+        Chicken Katsu Curry Udon
+        2x @66.000 132.000
+        Ice Lemon Tea
+        2x @17.000 34.000
+        Total Food 245.000
+        Total Beverage 85.000
+        9 items
+        Grand Total : 330.000
+        BRI : 330.000
+        Price inclusive of PB1 : 30.000
+      '''));
+      expect(_summary(r), {
+        'Beef Curry Udon': [1, 71000],
+        'Chicken Katsu': [2, 21000],
+        'Cold Ocha': [3, 17000],
+        'Chicken Katsu Curry Udon': [2, 66000],
+        'Ice Lemon Tea': [2, 17000],
+      });
+      expect(r.totalStruk, 330000);
+      expect(r.pajakTermasuk, isTrue);
+      expect(r.pajakPersenSaran, 0);
+      expect(r.servicePersenSaran, 0);
+    });
+  });
+
   group('header & diskon transaksi', () {
     test('jam buka tidak terbaca sebagai item, PB1 dalam kurung', () {
       final r = parseReceiptRows(_rows('''
